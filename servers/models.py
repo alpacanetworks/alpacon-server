@@ -20,8 +20,6 @@ from utils.models import UUIDBaseModel
 
 logger = logging.getLogger(__name__)
 
-STAT_LEVEL_NO = 5
-
 
 class Server(WebSocketClient):
     name = models.SlugField(
