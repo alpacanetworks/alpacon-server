@@ -1,6 +1,6 @@
 # Alpacon Server
 
-Alpaca Infra Platform (AIP) aims to redesign the ways to access and manage server infrastructure. This project, `alpacon` is the API server for Alpaca Infra Platform.
+Alpaca Infra Platform (AIP) aims to redesign the ways to access and manage server infrastructure. This project, `alpacon` is the API server for Alpaca Infra Platform. With `alpacon`, you can remotely access and administrate your infrastructure via RESTful API securely.
 
 This document describes the procedures to install, develop, test, and deploy `alpacon`. Please note that this README is for development environment setup, not for production.
 
