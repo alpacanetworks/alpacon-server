@@ -1,12 +1,17 @@
+from datetime import timedelta
+import uuid
+
 from django.test import TestCase
 from django.urls import reverse
 from django.contrib.auth import get_user_model
+from django.utils.crypto import get_random_string
 from django.core.exceptions import ObjectDoesNotExist
 
 from rest_framework.test import APITestCase
 from rest_framework import status
 
 from api.apiclient.models import APIClient
+from api.apiclient.tokens import JWTRefreshToken
 
 
 User = get_user_model()
@@ -223,3 +228,148 @@ class APIClientAuthTestCase(APITestCase):
         self.client.login(id=self.client_id, key=self.client_key)
         response = self.client.get(reverse('api:index'))
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+class JWTLoginTestCase(APITestCase):
+    """
+    When logging in using ID and key, check the APIclient model and test whether the token is returned normally.
+    """
+
+    def setUp(self):
+        self.client_id = uuid.uuid4()
+        self.client_key = get_random_string(16)
+    
+        self.user = User.objects.create_user(username='testuser')
+        self.api_client = APIClient.objects.create_api_client(
+            owner=self.user,
+            id=self.client_id,
+            key=self.client_key,
+        )
+    
+    def jwtlogin(self):
+        response = self.client.post(
+            reverse('api:apiclient:jwt:login'), {
+                'id': self.client_id,
+                'key': self.client_key,
+            }
+        )
+        self.assertEquals(response.status_code, status.HTTP_200_OK)
+        self.assertTrue('refresh' in response.data)
+        self.assertTrue('access' in response.data)
+        self.token = response.data['access']
+        self.client.credentials(
+            HTTP_AUTHORIZATION='Bearer %s' % self.token
+        )
+
+    def test_jwtlogin(self):
+        self.jwtlogin()
+        response = self.client.get(reverse('api:auth:is-authenticated'))
+        self.assertEquals(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data['authenticated'])
+
+    def test_unauthorized(self):
+        response = self.client.get(reverse('api:auth:is-authenticated'))
+        self.assertEquals(response.status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertFalse(response.data['authenticated'])
+    
+    def test_jwtlogin_no_id_key(self):
+        response = self.client.post(
+            reverse('api:apiclient:jwt:login'), { }
+        )
+        self.assertEquals(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_jwtlogin_no_id(self):
+        response = self.client.post(
+            reverse('api:apiclient:jwt:login'), {
+                'key': self.client_key,
+            }
+        )
+        self.assertEquals(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_jwtlogin_no_key(self):
+        response = self.client.post(
+            reverse('api:apiclient:jwt:login'), {
+                'id': self.client_id,
+            }
+        )
+        self.assertEquals(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_jwtlogin_invalid_id_and_key(self):
+        response = self.client.post(
+            reverse('api:apiclient:jwt:login'), {
+                'id': 'a'*128,
+                'key': 'b'*128,
+        }
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+class JWTRefreshTestCase(APITestCase):
+    """
+    When a refresh token is entered in the header, it verifies the refresh token and tests whether the new access token is returned normally.
+    """
+
+    def test_jwtrefresh(self):
+        refresh = JWTRefreshToken()
+        refresh["test_claim"] = "test_client_id"
+
+        response = self.client.post(
+            reverse('api:apiclient:jwt:refresh'), {
+                "refresh": str(refresh)
+            }
+        )
+        self.assertEquals(response.status_code, status.HTTP_200_OK)
+        self.assertTrue('access' in response.data)
+    
+    def test_it_should_return_401_if_token_invalid(self):
+        refresh = JWTRefreshToken()
+
+        refresh.set_exp(lifetime=-timedelta(seconds=1))
+
+        response = self.client.post(
+            reverse('api:apiclient:jwt:refresh'), {
+                "refresh": str(refresh)
+            }
+        )
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.data["code"], "token_not_valid")
+
+
+class JWTSessionTestCase(APITestCase):
+    """
+    When an expired access token is entered in the header, alpacon-server tests whether a 403 Forbidden error is generated.
+    """
+
+    def setUp(self):
+        self.client_id = uuid.uuid4()
+        self.client_key = get_random_string(16)
+    
+        self.user = User.objects.create_user(username='testuser')
+        self.api_client = APIClient.objects.create_api_client(
+            owner=self.user,
+            id=self.client_id,
+            key=self.client_key,
+        )
+
+    def test_session_connect(self):
+        refresh = JWTRefreshToken.for_client(self.client_id)
+        access = refresh.access_token
+        self.client.credentials(
+            HTTP_AUTHORIZATION='Bearer %s' % access
+        )
+
+        response = self.client.get(reverse('api:auth:is-authenticated'))
+        self.assertEquals(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data['authenticated'])
+
+    def test_session_no_connect(self):
+        refresh = JWTRefreshToken.for_client(self.client_id)
+        access = refresh.access_token
+
+        access.set_exp(lifetime=-timedelta(seconds=1))
+
+        self.client.credentials(
+            HTTP_AUTHORIZATION='Bearer %s' % access
+        )
+
+        response = self.client.get(reverse('api:auth:is-authenticated'))
+        self.assertEquals(response.status_code, status.HTTP_403_FORBIDDEN)

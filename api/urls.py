@@ -9,6 +9,7 @@ app_name = 'api'
 urlpatterns = [
     path('', api_index, name='index'),
     path('status/', status, name='status'),
+    path('apiclient/', include('api.apiclient.urls')),
 ] + list(map(
     lambda app: path('%s/' % app, include('%s.api.urls' % app)),
     settings.REST_API_APPS

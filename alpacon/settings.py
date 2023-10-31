@@ -94,6 +94,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'crispy_forms',
     'crispy_bootstrap5',
+    'rest_framework_simplejwt',
     'django_filters',
     'django.contrib.admin',
     'django.contrib.auth',
@@ -198,6 +199,7 @@ CHANNEL_LAYERS = {
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES':[
         'rest_framework.authentication.SessionAuthentication',
+        'api.apiclient.auth.APIClientJWTAuthentication',
         'api.apiclient.auth.APIClientAuthentication',
         'api.apitoken.auth.APITokenAuthentication',
     ],
@@ -212,6 +214,22 @@ REST_FRAMEWORK = {
     'DEFAULT_PAGINATION_CLASS': 'api.pagination.MyPageNumberPagination',
     'PAGE_SIZE': 15,
     'TEST_REQUEST_DEFAULT_FORMAT': 'json',
+}
+
+SIMPLE_JWT = {
+    'ACCESS_TOKEN_LIFETIME': timedelta(
+        minutes=int(os.getenv('ALPACON_ACCESS_TOKEN_LIFETIME_MINS', '1440'))
+        ),
+    'REFRESH_TOKEN_LIFETIME': timedelta(
+        days=int(os.getenv('AlPACON_REFRESH_TOKEN_LIFETIME_DAYS', '14'))
+        ),
+    'CLIENT_ID_FIELD' : 'id',
+    'CLIENT_ID_CLAIM': 'client_id',
+    'TOKEN_TYPE_CLAIM': 'token_type',
+    'AUTH_HEADER_NAME': 'HTTP_AUTHORIZATION',
+    'AUTH_TOKEN_CLASSES': ('rest_framework_simplejwt.tokens.AccessToken',),
+    'ALGORITHM': 'HS256',
+    'SIGNING_KEY': SECRET_KEY,
 }
 
 CRISPY_ALLOWED_TEMPLATE_PACKS = 'bootstrap5'
