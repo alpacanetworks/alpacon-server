@@ -28,7 +28,7 @@ def get_auth_user(scope):
         if header[0] == b'Authorization' or header[0] == b'authorization':
             auth = header[1].decode('ascii')
             if auth:
-                if auth.startswith('Bearer'):
+                if auth.startswith('Bearer '):
                     access = auth[7:]
                     try:
                         validated_token = AccessToken(access)
