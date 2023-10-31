@@ -3,6 +3,10 @@ import logging
 
 from django.utils.functional import LazyObject
 from django.core.exceptions import ObjectDoesNotExist, ValidationError
+from django.conf import settings
+
+from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework_simplejwt.tokens import AccessToken
 
 from channels.auth import AuthMiddleware, UserLazyObject
 from channels.middleware import BaseMiddleware
@@ -24,6 +28,24 @@ def get_auth_user(scope):
         if header[0] == b'Authorization' or header[0] == b'authorization':
             auth = header[1].decode('ascii')
             if auth:
+                if auth.startswith('Bearer'):
+                    access = auth[7:]
+                    try:
+                        validated_token = AccessToken(access)
+                        client_id = validated_token.get(settings.SIMPLE_JWT['CLIENT_ID_CLAIM'], None)
+                        if not client_id:
+                            raise WebSocketClient.DoesNotExist
+                        api_client = WebSocketClient.objects.get(**{settings.SIMPLE_JWT['CLIENT_ID_FIELD']: client_id})
+                        return (api_client, 'wsclient')
+                    except (TokenError, ValidationError):
+                        logger.error('Given token is not valid.')
+                        return None
+                    except WebSocketClient.DoesNotExist:
+                        logger.debug('WebSocketClient not found for client ID: %s', client_id)
+                        return None
+                    except Exception as e:
+                        logger.exception(e)
+                        return None
                 try:
                     data = dict(parser.findall(auth))
                 except:
@@ -40,7 +62,7 @@ def get_auth_user(scope):
                     except Exception as e:
                         logger.exception(e)
                 elif data.get('token'):
-                    try:
+                    try: 
                         return (APIToken.objects.get_valid_user(key=data.get('token'))[0], 'user')
                     except (ObjectDoesNotExist, ValidationError):
                         logger.debug('Token not found.')
