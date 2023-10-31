@@ -12,8 +12,16 @@ class JWTLoginSerializer(serializers.Serializer):
     After authenticating whether it is a valid API client using the ID and Key received through the request, the access token and refresh token are returned using the client_id.
     """
 
-    id = serializers.UUIDField(write_only=True)
-    key = serializers.CharField(write_only=True)
+    id = serializers.UUIDField(
+        label=_('ID'),
+        write_only=True,
+    )
+    key = serializers.CharField(
+        max_length=128,
+        label=_('key'),
+        style={'input_type': 'password'},
+        write_only=True,
+    )
 
     def validate(self, data):
         client_id = data['id']
