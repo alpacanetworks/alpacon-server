@@ -34,7 +34,6 @@ hyperlink==21.0.0
 idna==3.3
 incremental==21.3.0
 kombu==5.3.1
-ldap3==2.9.1
 mistune==3.0.1
 msgpack==1.0.4
 packaging==21.3
