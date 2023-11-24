@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 class ServerViewSet(viewsets.ModelViewSet):
     queryset = Server.objects.all()
     serializer_class = ServerSerializer
-    filterset_fields = ['version', 'enabled', 'commissioned', 'owner', 'groups']
+    filterset_fields = ['name', 'version', 'enabled', 'commissioned', 'owner', 'groups']
     search_fields = [
         'id', 'name', 'version', 'session__remote_ip',
         'owner__username', 'owner__first_name', 'owner__last_name', 'groups__name'
