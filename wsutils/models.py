@@ -81,21 +81,29 @@ class WebSocketSession(UUIDBaseModel):
         super().save(update_fields=['deleted_at'])
 
     def send(self, json_data):
-        logger.debug('%s => %s', self.channel_id, json_data)
+        logger.debug('%s => %s...', self.channel_id, str(json_data)[:20])
         async_to_sync(get_channel_layer().send)(self.channel_id, {
             'type': 'send_message',
             'content': json_data
         })
 
-    def close(self, quit=False):
+    def close(self, quit=False, delete=False):
         if quit:
+            logger.debug('Closing concurrent session %s for %s.', self.channel_id, self.remote_ip)
             self.send({
                 'query': 'quit',
                 'reason': 'New connection from the same host has been established.'
             })
         else:
+            logger.debug('Closing retired session %s for %s.', self.channel_id, self.remote_ip)
             self.send({
                 'query': 'reconnect',
                 'reason': 'Session has retired. Please reconnect again to keep up to date.'
             })
-        self.delete()
+
+        async_to_sync(get_channel_layer().send)(self.channel_id, {
+            'type': 'close',
+        })
+
+        if delete and not self.deleted_at:
+            self.delete()

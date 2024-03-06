@@ -1,6 +1,8 @@
 import re
 import logging
 
+from asgiref.sync import sync_to_async
+
 from django.db import transaction
 from django.utils import timezone
 
@@ -8,6 +10,7 @@ from channels.generic.websocket import AsyncJsonWebsocketConsumer, AsyncWebsocke
 from channels.db import database_sync_to_async
 
 from wsutils.models import WebSocketSession
+from wsutils.tasks import drop_concurrent_sessions, delete_session
 
 
 logger = logging.getLogger(__name__)
@@ -31,19 +34,13 @@ class APIClientAsyncConsumer(AsyncJsonWebsocketConsumer):
 
     @database_sync_to_async
     def create_session(self):
-        if not self.scope['wsclient'].concurrent:
-            sessions = WebSocketSession.objects.select_for_update(of=('self',)).filter(
-                client__pk=self.scope['wsclient'].pk,
-                deleted_at__isnull=True,
-            )
-            with transaction.atomic():
-                for session in sessions:
-                    session.close(quit=True)
         self.session = WebSocketSession.objects.create(
             client=self.scope['wsclient'],
             remote_ip=self.get_remote_ip(),
             channel_id=self.channel_name
         )
+        if not self.scope['wsclient'].concurrent:
+            drop_concurrent_sessions.delay(self.scope['wsclient'].pk, self.session.pk)
 
     @database_sync_to_async
     def update_session(self):
@@ -66,11 +63,12 @@ class APIClientAsyncConsumer(AsyncJsonWebsocketConsumer):
     async def connect(self):
         if not self.scope['wsclient']:
             await self.close(code=403)
-            return False
+            return None
         else:
-            await self.create_session()
             await self.accept()
-            return True
+            await self.create_session()
+            logger.debug('Connect for session %s (channel %s).', self.session.id, self.channel_name)
+            return self.session
 
     async def receive_json(self, content):
         if not hasattr(self, 'session') or not await self.update_session():
@@ -80,8 +78,8 @@ class APIClientAsyncConsumer(AsyncJsonWebsocketConsumer):
 
     async def disconnect(self, close_code):
         if hasattr(self, 'session'):
+            logger.debug('Disconnect for session %s (channel %s).', self.session.id, self.channel_name)
             await self.delete_session()
-        await super().disconnect(close_code)
 
     async def send_message(self, text_data):
         content = text_data['content']

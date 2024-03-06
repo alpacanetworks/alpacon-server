@@ -233,6 +233,26 @@ class WebSocketConsumerTestCase(TransactionTestCase):
         await communicator.receive_nothing()
         await communicator.disconnect()
 
+    async def test_session_close(self):
+        communicator = WebsocketCommunicator(
+            APIClientTestApp,
+            'ws/test/',
+            headers=(
+                (b'authorization', ('id="%s", key="%s"' % (self.client.id, self.key)).encode('ascii')),
+            )
+        )
+        (connected, _) = await communicator.connect()
+        self.assertTrue(connected)
+
+        session = await database_sync_to_async(self.client.sessions.first)()
+        self.assertIsNotNone(session)
+
+        await sync_to_async(session.close)(quit=True)
+        message = await communicator.receive_json_from()
+        self.assertIn('query', message)
+        self.assertEquals(message['query'], 'quit')
+        await communicator.disconnect()
+
     async def test_no_credentials(self):
         communicator = WebsocketCommunicator(
             APIClientTestApp,

@@ -62,7 +62,7 @@ def get_auth_user(scope):
                     except Exception as e:
                         logger.exception(e)
                 elif data.get('token'):
-                    try: 
+                    try:
                         return (APIToken.objects.get_valid_user(key=data.get('token'))[0], 'user')
                     except (ObjectDoesNotExist, ValidationError):
                         logger.debug('Token not found.')
