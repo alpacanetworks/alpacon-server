@@ -2,6 +2,7 @@ from django.conf import settings
 
 from rest_framework_simplejwt.tokens import RefreshToken
 
+
 class JWTRefreshToken(RefreshToken):
     """
     Return a token object by putting the APIclient ID in the token claim, and create an access token using the refresh token.

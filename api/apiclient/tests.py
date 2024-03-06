@@ -1,5 +1,5 @@
-from datetime import timedelta
 import uuid
+from datetime import timedelta
 
 from django.test import TestCase
 from django.urls import reverse
@@ -137,80 +137,80 @@ class APIClientAuthTestCase(APITestCase):
         self.client_id = str(client.id)
 
     def test_no_auth(self):
-        response = self.client.get(reverse('api:index'))
+        response = self.client.get(reverse('api:status'))
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_api_auth(self):
         self.client.credentials(
             HTTP_AUTHORIZATION='id="%s", key="%s"' % (self.client_id, self.client_key)
         )
-        response = self.client.get(reverse('api:index'))
+        response = self.client.get(reverse('api:status'))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
     def test_api_auth_without_quotes(self):
         self.client.credentials(
             HTTP_AUTHORIZATION='id=%s, key=%s' % (self.client_id, self.client_key)
         )
-        response = self.client.get(reverse('api:index'))
+        response = self.client.get(reverse('api:status'))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
     def test_api_auth_no_space(self):
         self.client.credentials(
             HTTP_AUTHORIZATION='id="%s",key="%s"' % (self.client_id, self.client_key)
         )
-        response = self.client.get(reverse('api:index'))
+        response = self.client.get(reverse('api:status'))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
     def test_api_auth_no_key_1(self):
         self.client.credentials(
             HTTP_AUTHORIZATION='id="%s"' % (self.client_id)
         )
-        response = self.client.get(reverse('api:index'))
+        response = self.client.get(reverse('api:status'))
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_api_auth_no_key_2(self):
         self.client.credentials(
             HTTP_AUTHORIZATION='id="%s", key=""' % (self.client_id)
         )
-        response = self.client.get(reverse('api:index'))
+        response = self.client.get(reverse('api:status'))
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_api_auth_no_id_1(self):
         self.client.credentials(
             HTTP_AUTHORIZATION='key="%s"' % (self.client_key)
         )
-        response = self.client.get(reverse('api:index'))
+        response = self.client.get(reverse('api:status'))
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_api_auth_no_id_2(self):
         self.client.credentials(
             HTTP_AUTHORIZATION='id="", key="%s"' % (self.client_key)
         )
-        response = self.client.get(reverse('api:index'))
+        response = self.client.get(reverse('api:status'))
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_api_auth_empty(self):
         self.client.credentials(HTTP_AUTHORIZATION='')
-        response = self.client.get(reverse('api:index'))
+        response = self.client.get(reverse('api:status'))
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_api_auth_malformed_1(self):
         self.client.credentials(HTTP_AUTHORIZATION='aaaaa')
-        response = self.client.get(reverse('api:index'))
+        response = self.client.get(reverse('api:status'))
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_api_auth_malformed_2(self):
         self.client.credentials(
             HTTP_AUTHORIZATION='id="%s", key="%s"' % ('a'*128, 'b'*128)
         )
-        response = self.client.get(reverse('api:index'))
+        response = self.client.get(reverse('api:status'))
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_api_auth_malformed_3(self):
         self.client.credentials(
             HTTP_AUTHORIZATION='id="%s", key="%s"' % ('a'*512, 'b'*512)
         )
-        response = self.client.get(reverse('api:index'))
+        response = self.client.get(reverse('api:status'))
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_login_1(self):
@@ -218,7 +218,7 @@ class APIClientAuthTestCase(APITestCase):
         APIClient should be denied on user login.
         """
         self.client.login(username=self.client_id, password=self.client_key)
-        response = self.client.get(reverse('api:index'))
+        response = self.client.get(reverse('api:status'))
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_login_2(self):
@@ -226,8 +226,9 @@ class APIClientAuthTestCase(APITestCase):
         APIClient should be denied on user login.
         """
         self.client.login(id=self.client_id, key=self.client_key)
-        response = self.client.get(reverse('api:index'))
+        response = self.client.get(reverse('api:status'))
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
 
 class JWTLoginTestCase(APITestCase):
     """

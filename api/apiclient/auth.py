@@ -56,6 +56,7 @@ class APIClientAuthentication(BaseAuthentication):
         except Exception as e:
             logger.exception(e)
             return None
+        
 
 class APIClientJWTAuthentication(JWTAuthentication):
     """

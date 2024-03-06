@@ -7,7 +7,7 @@ from rest_framework import permissions
 
 
 @api_view(['GET'])
-@permission_classes((permissions.IsAuthenticated, ))
+@permission_classes((permissions.AllowAny, ))
 def api_index(request, format=None):
     api = {}
     for app in settings.REST_API_APPS:
@@ -19,6 +19,6 @@ def api_index(request, format=None):
 
 
 @api_view(['GET'])
-@permission_classes((permissions.AllowAny,))
+@permission_classes((permissions.IsAuthenticated,))
 def status(request, format=None):
     return Response({'status': 'Good'})
