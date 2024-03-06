@@ -24,7 +24,7 @@ class UserViewSet(viewsets.ModelViewSet):
     serializer_class = UserSerializer
     authentication_classes = [SessionAuthentication, APITokenAuthentication]
     permission_classes = [UserObjectPermission]
-    filterset_fields = ['is_active', 'is_staff', 'is_superuser', 'is_ldap_user', 'shell']
+    filterset_fields = ['is_active', 'is_staff', 'is_superuser', 'is_ldap_user', 'shell', 'username']
     search_fields = ['id', 'username', 'first_name', 'last_name', 'email', 'phone', 'tags', 'description', 'uid']
 
     def get_object(self):
@@ -115,7 +115,7 @@ class GroupViewSet(viewsets.ModelViewSet):
     serializer_class = GroupSerializer
     authentication_classes = [SessionAuthentication, APITokenAuthentication]
     permission_classes = [GroupObjectPermission]
-    filterset_fields = ['is_ldap_group']
+    filterset_fields = ['name', 'is_ldap_group']
     search_fields = ['id', 'name', 'display_name', 'tags', 'description', 'gid', 'server__name']
 
     def get_serializer_class(self):
