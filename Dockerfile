@@ -21,7 +21,7 @@ WORKDIR /opt/alpacon
 COPY --from=builder /root/node_modules ./
 COPY . .
 
-RUN pip install --no-cache-dir -r requirements.txt && django-admin compilemessages --ignore env
+RUN pip install --no-cache-dir -r requirements.txt
 RUN mkdir /opt/alpacon/media && chown -R alpacon:alpacon /opt/alpacon/media
 
 USER alpacon
