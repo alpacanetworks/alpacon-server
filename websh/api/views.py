@@ -30,9 +30,9 @@ class SessionViewSet(CreateUpdateListRetrieveViewSet):
     serializer_class = SessionSerializer
     authentication_classes = [SessionAuthentication, APITokenAuthentication]
     permission_classes = [SessionObjectPermission]
-    filterset_fields = ['server', 'user', 'root']
+    filterset_fields = ['server', 'user', 'username', 'groupname']
     search_fields = [
-        'server__name',
+        'server__name', 'username', 'groupname',
         'user__first_name', 'user__last_name', 'user__username'
     ]
     ordering = ['-added_at']
@@ -44,7 +44,7 @@ class SessionViewSet(CreateUpdateListRetrieveViewSet):
                 Q(server__groups__membership__user__pk=self.request.user.pk)
                 | Q(server__owner__pk=self.request.user.pk)
             ).distinct()
-        if self.action == 'update' or self.action == 'partial_update':
+        if self.action in ['update', 'partial_update', 'share']:
             queryset = queryset.filter(
                 user__pk=self.request.user.pk,
             )
@@ -108,7 +108,7 @@ class ServerQuerySetMixin:
 
 
 class FileDownloadMixin:
-    # Client downloads the file by making a GET request to the corresponding URLS
+    # Client, Alpamon downloads the file by making a GET request to the corresponding URLS
     @action(detail=True, methods=['get'])
     def download(self, request, pk=None):
         self.object = self.get_object()
@@ -128,7 +128,11 @@ class FileDownloadMixin:
 class UploadedFileViewSet(ServerQuerySetMixin, FileDownloadMixin, CreateListRetrieveViewSet):
     queryset = UploadedFile.objects.all()
     serializer_class = UploadedFileSerializer
-    filterset_fields = ['server', 'user']
+    filterset_fields = ['server', 'user', 'username', 'groupname']
+    search_fields = [
+        'name', 'server__name', 'username', 'groupname',
+        'user__first_name', 'user__last_name', 'user__username',
+    ]
     ordering = ['-added_at']
 
     def perform_create(self, serializer):
@@ -139,7 +143,11 @@ class UploadedFileViewSet(ServerQuerySetMixin, FileDownloadMixin, CreateListRetr
 class DownloadedFileViewSet(ServerQuerySetMixin, FileDownloadMixin, CreateListRetrieveViewSet):
     queryset = DownloadedFile.objects.all()
     serializer_class = DownloadedFileSerializer
-    filterset_fields = ['server', 'user']
+    filterset_fields = ['server', 'user', 'username', 'groupname']
+    search_fields = [
+        'name', 'server__name', 'username', 'groupname',
+        'user__first_name', 'user__last_name', 'user__username',
+    ]
     ordering = ['-added_at']
 
     def perform_create(self, serializer):

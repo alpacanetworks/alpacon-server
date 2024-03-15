@@ -1,20 +1,28 @@
 from datetime import timedelta
+
 from asgiref.sync import sync_to_async
+from termcolor import colored
+
 from channels.routing import URLRouter
 from channels.testing import WebsocketCommunicator
+
 from django.urls import reverse
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from django.utils.crypto import get_random_string
 from django.test import TransactionTestCase
+
 from rest_framework import status
 from rest_framework.test import APITestCase, APIClient
-from termcolor import colored
+
+from proc.models import SystemUser, SystemGroup
 from servers.models import Server
+from iam.models import Group
 from iam.test_user import get_random_username
 from websh.models import Session, UserChannel, PtyChannel
 from websh.routing import websocket_urlpatterns
 from wsutils.auth import APIAuthMiddlewareStack
+
 
 User = get_user_model()
 WsApp = APIAuthMiddlewareStack(
@@ -42,16 +50,33 @@ class SessionTestCase(APITestCase):
         self.user = User.objects.create_user(
             username=self.username,
             password=self.password,
+            is_staff=True,
+            is_superuser=True,
         )
 
-        self.server = Server.objects.create(name='testing', owner=self.user)
+        self.server = Server.objects.create(name='testing', owner=self.user, commissioned=True)
+        self.server.osversion_set.create(
+            name='ubuntu',
+            version='22.04',
+            platform='debian',
+            platform_like='debian',
+        )
+        self.server.sessions.create(
+            remote_ip='127.0.0.1',
+            channel_id='fake_channel1'
+        )
         self.client.login(username=self.username, password=self.password)
+
+        # Generally, system users and groups on this server are synchronized with alpacon.
+        # The 'root' is neither an IAM user nor part of an IAM group, thus 'iam_user' and 'iam_group' are not defined for it.
+        SystemUser.objects.create(server=self.server, uid=2010, gid=2000, username='root')
+        SystemGroup.objects.create(server=self.server, gid=2000, groupname='root')
 
     def test_create_session(self):
         response = self.client.post(
             reverse('api:websh:session-list'), {
                 'server': self.server.pk,
-                'root shell': True,
+                'username': 'root',
             }
         )
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
@@ -73,6 +98,245 @@ class SessionTestCase(APITestCase):
         self.assertTrue(user_channel.is_master)
 
 
+
+class SessionPermissionTestCase(APITestCase):
+    def setUp(self):
+        self.password = get_random_string(16)
+        self.owner = User.objects.create_user(
+            username='owner',
+            password=self.password,
+        )
+        self.user = User.objects.create_user(
+            username='user',
+            password=self.password,
+        )
+        self.staff = User.objects.create_user(
+            username='staff',
+            password=self.password,
+            is_staff=True,
+        )
+        self.superuser = User.objects.create_user(
+            username='superuser',
+            password=self.password,
+            is_staff=True,
+            is_superuser=True,
+        )
+        self.group_member = User.objects.create_user(
+            username='group-member',
+            password=self.password,
+        )
+        self.group_manager = User.objects.create_user(
+            username='group-manager',
+            password=self.password,
+        )
+        self.group_owner = User.objects.create_user(
+            username='group-owner',
+            password=self.password,
+        )
+        self.group = Group.objects.create(
+            name='group',
+            display_name='Group',
+        )
+        self.group.membership_set.create(user=self.group_member, role='member')
+        self.group.membership_set.create(user=self.group_manager, role='manager')
+        self.group.membership_set.create(user=self.group_owner, role='owner')
+
+        self.server = Server.objects.create(name='testing', owner=self.owner, commissioned=True)
+        self.server.sessions.create(
+            remote_ip='127.0.0.1',
+            channel_id='fake_channel1'
+        )
+        self.server.groups.add(self.group)
+
+        # Generally, system users and groups on this server are synchronized with alpacon.
+        # The 'root' is neither an IAM user nor part of an IAM group, thus 'iam_user' and 'iam_group' are not defined for it.
+        SystemUser.objects.create(server=self.server, uid=2010, gid=2000, username='root')
+        SystemGroup.objects.create(server=self.server, gid=2000, groupname='root')
+
+
+    def test_create_session_owner(self):
+        self.client.login(username='owner', password=self.password)
+        response = self.client.post(
+            reverse('api:websh:session-list'), {
+                'server': self.server.pk,
+            }
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        session = Session.objects.get(pk=response.data['id'])
+        self.assertEqual(session.username, 'owner')
+        self.assertEqual(session.groupname, 'alpacon') # For non-system users, ensure groupname is 'alpacon'.
+
+        response = self.client.post(
+            reverse('api:websh:session-list'), {
+                'server': self.server.pk,
+                'username': 'root',
+            }
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        session = Session.objects.get(pk=response.data['id'])
+        self.assertEqual(session.username, 'root')
+        self.assertEqual(session.groupname, 'root') # Check if system user's groupname matches username.
+
+
+    def test_create_session_user(self):
+        self.client.login(username='user', password=self.password)
+        response = self.client.post(
+            reverse('api:websh:session-list'), {
+                'server': self.server.pk,
+            }
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+        # Below-staff cannot create sessions for others
+        response = self.client.post(
+            reverse('api:websh:session-list'), {
+                'server': self.server.pk,
+                'username': 'root',
+            }
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_create_session_staff(self):
+        self.client.login(username='staff', password=self.password)
+        response = self.client.post(
+            reverse('api:websh:session-list'), {
+                'server': self.server.pk,
+                'username': self.staff.username,
+            }
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        session = Session.objects.get(pk=response.data['id'])
+        self.assertEqual(session.username, self.staff.username)
+        self.assertEqual(session.groupname, 'alpacon')
+
+        # Staff-level or higher users can create session for other accounts
+        response = self.client.post(
+            reverse('api:websh:session-list'), {
+                'server': self.server.pk,
+                'username': 'root',
+            }
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        session = Session.objects.get(pk=response.data['id'])
+        self.assertEqual(session.username, 'root')
+        self.assertEqual(session.groupname, 'root') # if systemuser groupname is same at username
+
+        response = self.client.post(
+            reverse('api:websh:session-list'), {
+                'server': self.server.pk,
+                'username': 'superuser',
+            }
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+    def test_create_session_superuser(self):
+        self.client.login(username='superuser', password=self.password)
+        response = self.client.post(
+            reverse('api:websh:session-list'), {
+                'server': self.server.pk,
+                'username': self.superuser.username,
+            }
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        session = Session.objects.get(pk=response.data['id'])
+        self.assertEqual(session.username, self.superuser.username)
+        self.assertEqual(session.groupname, 'alpacon') # if iam user (not systemuser) groupname is set alpacon
+
+        response = self.client.post(
+            reverse('api:websh:session-list'), {
+                'server': self.server.pk,
+                'username': 'root',
+            }
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        session = Session.objects.get(pk=response.data['id'])
+        self.assertEqual(session.username, 'root')
+        self.assertEqual(session.groupname, 'root')
+
+    def test_create_session_group_member(self):
+        self.client.login(username='group-member', password=self.password)
+        response = self.client.post(
+            reverse('api:websh:session-list'), {
+                'server': self.server.pk,
+                'username': self.group_member.username,
+            }
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        session = Session.objects.get(pk=response.data['id'])
+        self.assertEqual(session.username, self.group_member.username)
+        self.assertEqual(session.groupname, 'alpacon')
+
+        response = self.client.post(
+            reverse('api:websh:session-list'), {
+                'server': self.server.pk,
+                'username': 'root',
+            }
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_create_session_group_manager(self):
+        self.client.login(username='group-manager', password=self.password)
+        response = self.client.post(
+            reverse('api:websh:session-list'), {
+                'server': self.server.pk,
+                'username': self.group_manager.username,
+            }
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        session = Session.objects.get(pk=response.data['id'])
+        self.assertEqual(session.username, self.group_manager.username)
+        self.assertEqual(session.groupname, 'alpacon')
+
+        response = self.client.post(
+            reverse('api:websh:session-list'), {
+                'server': self.server.pk,
+                'username': 'root',
+            }
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        session = Session.objects.get(pk=response.data['id'])
+        self.assertEqual(session.username, 'root')
+        self.assertEqual(session.groupname, 'root')
+
+    def test_create_session_group_owner(self):
+        self.client.login(username='group-owner', password=self.password)
+        response = self.client.post(
+            reverse('api:websh:session-list'), {
+                'server': self.server.pk,
+                'username': self.group_owner.username,
+            }
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        session = Session.objects.get(pk=response.data['id'])
+        self.assertEqual(session.username, self.group_owner.username)
+        self.assertEqual(session.groupname, 'alpacon')
+
+        response = self.client.post(
+            reverse('api:websh:session-list'), {
+                'server': self.server.pk,
+                'username': 'root',
+            }
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        session = Session.objects.get(pk=response.data['id'])
+        self.assertEqual(session.username, 'root')
+        self.assertEqual(session.groupname, 'root')
+
+
+    # Prevents creation of sessions with usernames or groupnames not registered in IAM or Proc, even for users with staff-level permissions or higher.
+    def test_command_creation_with_unregistered_user_group(self):
+        self.client.login(username='superuser', password=self.password)
+        response = self.client.post(
+            reverse('api:websh:session-list'), {
+                'server': self.server.pk,
+                'username': 'unregistered',  # Use 'unregistered' to indicate absence in IAM/Proc
+                'groupname': 'unregistered',  # Use 'unregistered' to indicate absence in IAM/Proc
+            }
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+
 class ConsumerTestCase(TransactionTestCase):
 
     def setUp(self):
@@ -81,23 +345,36 @@ class ConsumerTestCase(TransactionTestCase):
         self.user = User.objects.create_user(
             username=self.username,
             password=self.password,
+            is_staff=True,
+            is_superuser=True,
         )
 
-        self.server = Server.objects.create(name='testing', owner=self.user)
-
+        self.server = Server.objects.create(name='testing', owner=self.user, commissioned=True)
+        self.server.osversion_set.create(
+            name='ubuntu',
+            version='22.04',
+            platform='debian',
+            platform_like='debian',
+        )
+        self.server.sessions.create(
+            remote_ip='127.0.0.1',
+            channel_id='fake_channel1'
+        )
         self.client.login(username=self.username, password=self.password)
-
         self.session = Session.objects.create(
             server=self.server,
             user=self.user,
-            root=True,
+            username='root',
         )
-
         self.user_channel = UserChannel.objects.create(
             session=self.session,
             user=self.user,
             is_master=True,
         )
+        # Generally, system users and groups on this server are synchronized with alpacon.
+        # The 'root' is neither an IAM user nor part of an IAM group, thus 'iam_user' and 'iam_group' are not defined for it.
+        SystemUser.objects.create(server=self.server, uid=2010, gid=2000, username='root')
+        SystemGroup.objects.create(server=self.server, gid=2000, groupname='root')
 
     async def test_connect(self):
         user_communicator = WebsocketCommunicator(
@@ -167,20 +444,25 @@ class SessionShareTestCase(APITestCase):
         self.master_user, self.user1, self.user2, self.no_login_user = self.users
         self.master_client, self.client1, self.client2, self.no_login_client = self.clients
 
-        self.server = Server.objects.create(name='testing', owner=self.master_user)
-
+        self.server = Server.objects.create(name='testing', owner=self.master_user, commissioned=True)
+        self.server.sessions.create(
+            remote_ip='127.0.0.1',
+            channel_id='fake_channel1'
+        )
         self.session = Session.objects.create(
             server=self.server,
             user=self.master_user,
-            root=True,
+            username='root',
         )
-
         self.master_user_channel = UserChannel.objects.create(
             session=self.session,
             user=self.master_user,
             is_master=True,
         )
-
+        # Generally, system users and groups on this server are synchronized with alpacon.
+        # The 'root' is neither an IAM user nor part of an IAM group, thus 'iam_user' and 'iam_group' are not defined for it.
+        SystemUser.objects.create(server=self.server, uid=2010, gid=2000, username='root')
+        SystemGroup.objects.create(server=self.server, gid=2000, groupname='root')
     def test_share_session(self):
         share_response = self.master_client.post(
             reverse('api:websh:session-share', kwargs={'pk': self.session.id}),
@@ -311,12 +593,27 @@ class ConsumerShareTestCase(TransactionTestCase):
         self.master_user, self.user1, self.user2, self.user3 = self.users
         self.master_client, self.client1, self.client2, self.client3 = self.clients
 
-        self.server = Server.objects.create(name='testing', owner=self.master_user)
+        self.server = Server.objects.create(name='testing', owner=self.master_user, commissioned=True)
+        self.server.osversion_set.create(
+            name='ubuntu',
+            version='22.04',
+            platform='debian',
+            platform_like='debian',
+        )
+        self.server.sessions.create(
+            remote_ip='127.0.0.1',
+            channel_id='fake_channel1'
+        )
+
+        # Generally, system users and groups on this server are synchronized with alpacon.
+        # The 'root' is neither an IAM user nor part of an IAM group, thus 'iam_user' and 'iam_group' are not defined for it.
+        SystemUser.objects.create(server=self.server, uid=2010, gid=2000, username='root')
+        SystemGroup.objects.create(server=self.server, gid=2000, groupname='root')
 
         self.session = Session.objects.create(
             server=self.server,
             user=self.master_user,
-            root=True,
+            username='root',
         )
 
         self.master_user_channel = UserChannel.objects.create(
@@ -412,7 +709,7 @@ class ConsumerShareTestCase(TransactionTestCase):
 
         # Other users cannot receive messages until ptyChannel sends one.
         self.assertTrue(await user1_communicator.receive_nothing(timeout=1))
-        self.assertTrue(await user1_communicator.receive_nothing(timeout=1))
+        self.assertTrue(await user2_communicator.receive_nothing(timeout=1))
 
         # ptyChannel broadcasts the message.
         await pty_communicator.send_to('alpacon')
@@ -433,7 +730,7 @@ class ConsumerShareTestCase(TransactionTestCase):
 
         # Other users cannot receive messages until ptyChannel sends one.
         self.assertTrue(await user1_communicator.receive_nothing(timeout=1))
-        self.assertTrue(await user1_communicator.receive_nothing(timeout=1))
+        self.assertTrue(await user2_communicator.receive_nothing(timeout=1))
 
         # ptyChannel broadcasts the message.
         await pty_communicator.send_to('alpamon')

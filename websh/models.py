@@ -10,16 +10,17 @@ from django.utils import timezone
 from django.utils.crypto import get_random_string
 from django.utils.translation import gettext_lazy as _
 
+from events.models import Command
 from utils.models import UUIDBaseModel
-from iam.models import Group
+from iam.models import Group, User
 
 logger = logging.getLogger(__name__)
+
 
 # This model represents a WebSocket Session, not an HTTP Session
 class Session(UUIDBaseModel):
     rows = models.PositiveSmallIntegerField(_('terminal rows'), default=0)
     cols = models.PositiveSmallIntegerField(_('terminal cols'), default=0)
-    root = models.BooleanField(_('root shell'), blank=True, default=False)
 
     record = models.TextField(_('record'), default='')
 
@@ -34,6 +35,8 @@ class Session(UUIDBaseModel):
         null=True, editable=False,
         verbose_name=_('user')
     )
+    username = models.CharField(_('username'), blank=True, max_length=128)
+    groupname = models.CharField(_('groupname'), default='alpacon', blank=True, max_length=128)
 
     closed_at = models.DateTimeField(_('closed_at'), null=True, editable=False)
 
@@ -55,7 +58,6 @@ class Session(UUIDBaseModel):
 
     def get_shared_url(self):
         return settings.REACT_URL + '/websh/join?session=%s' % self.pk
-
 
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)
@@ -84,7 +86,8 @@ class Session(UUIDBaseModel):
         deps = []
         group = Group.get_default()
 
-        if not self.root:
+        # Call prepare_user only if it's the user's own account
+        if self.user.username == self.username:
             self.server.prepare_user(self.user, group, deps)
 
         pty_websocket_url = pty_channel.get_server_ws_url()
@@ -95,14 +98,14 @@ class Session(UUIDBaseModel):
             'rows': self.rows,
             'cols': self.cols,
         }
-        if self.root:
-            data['username'] = 'root'
-            data['groupname'] = 'root'
-            data['home_directory'] = '/root'
-        else:
-            data['username'] = self.user.username
-            data['groupname'] = group.name
+
+        data['username'] = self.username
+        data['groupname'] = self.groupname
+        # Due to macOS not supporting adduser
+        if self.server.platform == 'darwin':
             data['home_directory'] = self.user.home_directory
+        else:
+            data['home_directory'] = self.server.systemuser_home_directory(self.username)
 
         self.server.execute(
             shell='internal',
@@ -194,7 +197,7 @@ class UserChannel(Channel):
             self.password = get_random_string(self.USER_CHANNEL_PASSWORD_LENGTH)
         super().save(*args, **kwargs)
 
-    def is_password_valid(self,password):
+    def is_password_valid(self, password):
         return self.password == password
 
 class PtyChannel(Channel):
@@ -223,6 +226,13 @@ class AbstractFile(UUIDBaseModel):
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
         editable=False,
         verbose_name=_('user')
+    )
+    username = models.CharField(_('username'), blank=True, max_length=128)
+    groupname = models.CharField(_('groupname'), default='alpacon', blank=True, max_length=128)
+    command = models.ForeignKey(
+        'events.Command',
+        blank=True, null=True, on_delete=models.CASCADE,
+        verbose_name=_('command'),
     )
     expires_at = models.DateTimeField(_('expires at'), blank=True)
 
@@ -268,30 +278,39 @@ class UploadedFile(AbstractFile):
         deps = []
         group = Group.get_default()
 
-        logger.info('Sending file "%s" to %s.', self.name, self)
-        if self.path:
+        if os.path.split(self.path)[1] != '':
+            path = self.path
+        elif self.path:
             path = os.path.join(self.path, self.name)
         else:
             if self.server.platform in ['debian', 'rhel']:
-                path = os.path.join(self.user.home_directory, self.name)
+                path = os.path.join(self.server.systemuser_home_directory(self.username), self.name)
             elif self.server.platform == 'darwin':
                 path = os.path.join(self.user.home_directory.replace('/home', '/Users'), self.name)
             else:
                 path = self.name
 
-        self.server.prepare_user(self.user, group, deps)
+        # Call prepare_user only if it's the user's own account
+        if self.user.username == self.username:
+            self.server.prepare_user(self.user, group, deps)
 
-        return self.server.execute(
+        logger.info('Sending file "%s" to %s. (username: %s, groupname: %s)', self.name, path, self.username, self.groupname)
+        self.command = self.server.execute(
             'download "%s"' % path,
             data=json.dumps({
                 'type': 'url',
                 'content': self.get_download_url(),
-                'username': self.user.username,
-                'groupname': 'alpacon',
+                'username': self.username,
+                'groupname': self.groupname,
             }),
+            username=self.username,
+            groupname=self.groupname,
             requested_by=self.user,
-            run_after=deps
+            run_after=deps,
         )
+        self.save()
+
+        return self.command
 
 class DownloadedFile(AbstractFile):
     class Meta:
@@ -315,18 +334,24 @@ class DownloadedFile(AbstractFile):
         deps = []
         group = Group.get_default()
 
-        logger.info('Sending upload_url to %s.', self.server.name)
+        logger.info('Sending upload_url to %s. (username: %s, groupname: %s) ', self.server.name, self.username, self.groupname)
 
-        self.server.prepare_user(self.user, group, deps)
+        # Call prepare_user only if it's the user's own account
+        if self.user.username == self.username:
+            self.server.prepare_user(self.user, group, deps)
 
-        return self.server.execute(
+        self.command = self.server.execute(
             'upload "%s"' % self.path,
             data=json.dumps({
                 'type': 'url',
                 'content': self.get_upload_url(),
-                'username': self.user.username,
-                'groupname': 'alpacon',
+                'username': self.username,
+                'groupname': self.groupname,
             }),
             requested_by=self.user,
-            run_after=deps
+            run_after=deps,
         )
+        self.save()
+
+        return self.command
+
