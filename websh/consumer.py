@@ -68,16 +68,21 @@ class SessionConsumer(AsyncWebsocketConsumer):
 
         if self.channel_model == UserChannel:
             self.channel.user_agent = self.get_user_agent()
+            self.channel.channel_name = self.channel_name.replace('sfic', 'specific')
+            await database_sync_to_async(
+                self.channel.save
+            )(update_fields=['channel_name', 'user_agent', 'remote_ip', 'opened_at'])
 
-        if self.channel_model == PtyChannel:
+        elif self.channel_model == PtyChannel:
             if self.channel.channel_name == '':
                 self.channel.channel_name = self.channel_name.replace('sfic', 'specific')
-        else:
-            self.channel.channel_name = self.channel_name.replace('sfic', 'specific')
+            await database_sync_to_async(
+                self.channel.save
+            )(update_fields=['channel_name', 'remote_ip', 'opened_at'])
 
-        await database_sync_to_async(
-            self.channel.save
-        )(update_fields=['channel_name', 'remote_ip', 'opened_at'])
+        else:
+            raise ValueError('Unknown channel model: %s' % self.channel_model)
+
 
         self.group_name = 'websh-%s' % self.session.id
         await self.channel_layer.group_add(

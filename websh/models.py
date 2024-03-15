@@ -14,6 +14,7 @@ from events.models import Command
 from utils.models import UUIDBaseModel
 from iam.models import Group, User
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -200,6 +201,7 @@ class UserChannel(Channel):
     def is_password_valid(self, password):
         return self.password == password
 
+
 class PtyChannel(Channel):
     class Meta:
         verbose_name = _('pty channel')
@@ -312,6 +314,7 @@ class UploadedFile(AbstractFile):
 
         return self.command
 
+
 class DownloadedFile(AbstractFile):
     class Meta:
         verbose_name = _('downloaded file')
@@ -354,4 +357,3 @@ class DownloadedFile(AbstractFile):
         self.save()
 
         return self.command
-
