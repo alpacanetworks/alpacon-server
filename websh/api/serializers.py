@@ -6,6 +6,7 @@ from django.utils import timezone
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
 
+from websh.mixins import WebshValidationSerializer
 from websh.models import Session, UploadedFile, DownloadedFile, Channel, UserChannel, PtyChannel
 from servers.api.serializers import RelatedServerField
 
@@ -16,7 +17,7 @@ class SessionSerializer(serializers.ModelSerializer):
     class Meta:
         model = Session
         fields = ['id', 'rows', 'cols', 'server', 'server_name',
-                  'user', 'user_name', 'root', 'user_agent', 'remote_ip',
+                  'user', 'user_name', 'username', 'groupname', 'user_agent', 'remote_ip',
                   'record', 'added_at', 'updated_at', 'closed_at']
         read_only_fields = ['id', 'record']
 
@@ -25,22 +26,18 @@ class SessionListSerializer(SessionSerializer):
     class Meta:
         model = Session
         fields = ['id', 'server', 'server_name', 'user', 'user_name',
-                  'root', 'user_agent', 'remote_ip', 'added_at', 'closed_at']
+                  'username', 'groupname', 'user_agent', 'remote_ip', 'added_at', 'closed_at']
 
 
-class SessionCreateSerializer(SessionSerializer):
+class SessionCreateSerializer(WebshValidationSerializer, SessionSerializer):
     websocket_url = serializers.CharField(
         read_only=True,
         label=_('WebSocket URL')
     )
 
     class Meta(SessionSerializer.Meta):
-        fields = ['id', 'rows', 'cols', 'server', 'user', 'root', 'user_agent', 'remote_ip', 'websocket_url']
-
-    def validate_root(self, val):
-        if val and not (self.context['request'].user.is_staff or self.context['request'].user.is_superuser):
-            raise ValidationError(_('Only superuser or staff can access this server as root.'))
-        return val
+        fields = ['id', 'rows', 'cols', 'server', 'user', 'username', 'groupname', 'user_agent', 'remote_ip',
+                  'websocket_url']
 
     def create(self, validated_data):
         instance = super().create(validated_data)
@@ -97,7 +94,7 @@ class SessionJoinSerializer(serializers.ModelSerializer):
         except UserChannel.DoesNotExist:
             raise ValidationError(_('Password does not match or session has expired.'))
         except UserChannel.MultipleObjectsReturned:
-            raise ValidationError(_('Unkown error'))
+            raise ValidationError(_('Unknown error'))
 
         if self.context['request'].user.is_authenticated:
             user_channel.user = self.context['request'].user
@@ -105,9 +102,9 @@ class SessionJoinSerializer(serializers.ModelSerializer):
 
         return {
             'websocket_url': (
-                ('wss://' if self.context['request'].is_secure() else 'ws://')
-                + self.context['request'].get_host()
-                + user_channel.get_user_ws_url()
+                    ('wss://' if self.context['request'].is_secure() else 'ws://')
+                    + self.context['request'].get_host()
+                    + user_channel.get_user_ws_url()
             ),
             'server': str(self.instance.server),
             'read_only': user_channel.read_only,
@@ -116,30 +113,31 @@ class SessionJoinSerializer(serializers.ModelSerializer):
         }
 
 
-class UploadedFileSerializer(serializers.ModelSerializer):
+class UploadedFileSerializer(WebshValidationSerializer):
     server = RelatedServerField()
     download_url = serializers.URLField(source='get_download_url', read_only=True)
 
     class Meta:
         model = UploadedFile
-        fields = ['id', 'name', 'path', 'content', 'size', 'server', 'user', 'expires_at', 'download_url']
-        read_only_fields = ['id', 'expires_at', 'download_url']
+        fields = ['id', 'name', 'path', 'content', 'size', 'server', 'user', 'username', 'groupname', 'expires_at',
+                  'download_url', 'command']
+        read_only_fields = ['id', 'expires_at', 'download_url', 'command']
         extra_kwargs = {
             'content': {
                 'write_only': True,
             },
         }
 
-
-class DownloadedFileSerializer(serializers.ModelSerializer):
+class DownloadedFileSerializer(WebshValidationSerializer):
     server = RelatedServerField()
     upload_url = serializers.URLField(source='get_upload_url', read_only=True)
     download_url = serializers.URLField(source='get_download_url', read_only=True)
 
     class Meta:
         model = DownloadedFile
-        fields = ['id', 'name', 'path', 'size', 'server', 'user', 'expires_at', 'upload_url', 'download_url']
-        read_only_fields = ['id', 'expires_at', 'upload_url', 'download_url']
+        fields = ['id', 'name', 'path', 'size', 'server', 'user', 'username', 'groupname', 'expires_at', 'upload_url',
+                  'download_url', 'command']
+        read_only_fields = ['id', 'expires_at', 'upload_url', 'download_url', 'command']
 
     def create(self, validated_data):
         validated_data['name'] = os.path.basename(validated_data['path'])
