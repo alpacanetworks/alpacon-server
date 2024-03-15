@@ -22,6 +22,16 @@ def ping_all_servers():
 
 
 @shared_task(ignore_result=True, queue='watchdog')
+def debug_all_servers():
+    for obj in Server.objects.filter(
+        enabled=True,
+        deleted_at__isnull=True,
+    ).exclude(session__isnull=True):
+        if obj.is_connected:
+            obj.execute('debug')
+
+
+@shared_task(ignore_result=True, queue='watchdog')
 def check_server_status(server_pk=None):
     if server_pk is None:
         for obj in Server.objects.filter(
