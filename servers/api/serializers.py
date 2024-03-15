@@ -15,17 +15,31 @@ from profiles.models import StarredServer
 from packages.models import PythonPackageEntry
 from proc.api.serializers import *
 
-
 logger = logging.getLogger(__name__)
+
+ALPAMON_REQUIRED_PACKAGES = [
+    'websocket_client',
+    'docutils',
+    'lockfile',
+    'pid',
+    'python_daemon',
+    'requests',
+    'six',
+    'urllib3',
+    'distro',
+    'setuptools',
+]
 
 
 class ServerSerializer(serializers.ModelSerializer):
     starred = serializers.SerializerMethodField()
+    is_root = serializers.SerializerMethodField()
+
     class Meta:
         model = Server
         fields = [
             'id', 'name', 'key', 'remote_ip', 'status',
-            'is_connected', 'commissioned', 'starred', 'version', 'osquery_version',
+            'is_root', 'is_connected', 'commissioned', 'starred', 'version', 'osquery_version',
             'cpu_physical_cores', 'cpu_logical_cores', 'cpu_type', 'physical_memory',
             'os_name', 'os_version', 'load', 'uptime', 'boot_time', 'last_connectivity',
             'started_at', 'added_at', 'updated_at',
@@ -41,13 +55,17 @@ class ServerSerializer(serializers.ModelSerializer):
         super().__init__(instance, *args, **kwargs)
 
     def get_starred(self, obj):
-        try:
-            return StarredServer.objects.get(
-                server__pk=obj.pk,
-                user__pk=self._user.pk,
-            ).ordering
-        except ObjectDoesNotExist:
-            return False
+        return StarredServer.objects.filter(
+            server__pk=obj.pk,
+            user__pk=self._user.pk,
+        ).exists()
+
+    def get_is_root(self, obj):
+        return obj.has_access(
+            user=self.context['request'].user,
+            username='root',
+            groupname='alpacon',
+        )
 
     def update(self, instance, validated_data):
         if 'key' in validated_data:
@@ -59,7 +77,7 @@ class ServerSerializer(serializers.ModelSerializer):
 class ServerListSerializer(ServerSerializer):
     class Meta(ServerSerializer.Meta):
         fields = [
-            'id', 'name', 'remote_ip', 'status', 'is_connected', 'commissioned', 'starred',
+            'id', 'name', 'remote_ip', 'status', 'is_root', 'is_connected', 'commissioned', 'starred',
             'cpu_physical_cores', 'cpu_logical_cores', 'cpu_type', 'physical_memory',
             'os_name', 'os_version', 'load', 'boot_time', 'owner', 'owner_name', 'groups', 'groups_name'
         ]
@@ -120,13 +138,24 @@ class ServerCreateSerializer(ServerSerializer):
         else:
             raise NotImplementedError
 
+        packages = [self._package]
+        if settings.IS_OFFLINE and platform == 'rhel':
+            for package_name in ALPAMON_REQUIRED_PACKAGES:
+                package = PythonPackageEntry.objects.filter(
+                    package__name=package_name,
+                ).order_by(
+                    '-v_major', '-v_minor', '-v_patch', '-v_label'
+                ).first()
+
+                if package is not None:
+                    packages.append(package)
+
         script = render_to_string(
             template_name, {
                 'alpacon_url': settings.URL_PREFIX,
                 'alpamon_id': server.id,
                 'alpamon_key': key,
-                'package_name': self._package.name,
-                'package_url': self._package.get_download_url(),
+                'packages': packages,
             }
         )
         installer = Installer.objects.create(server=server, content=script)
@@ -152,7 +181,8 @@ class ServerMetaSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Server
-        fields = ['version', 'osquery_version', 'info', 'os', 'time', 'load', 'users', 'groups', 'interfaces', 'addresses', 'packages', 'pypackages']
+        fields = ['version', 'osquery_version', 'info', 'os', 'time', 'load', 'users', 'groups', 'interfaces',
+                  'addresses', 'packages', 'pypackages']
 
     def save(self, *args, **kwargs):
         update_fields = ['updated_at']
@@ -222,7 +252,7 @@ class ServerMetaSerializer(serializers.ModelSerializer):
                     broadcast=item['broadcast'],
                 ) for item in self.validated_data['addresses']]
             )
-        
+
         if 'packages' in self.validated_data:
             self.instance.systempackage_set.all().delete()
             SystemPackage.objects.bulk_create(
@@ -293,7 +323,7 @@ class ServerStarStatusSerializer(serializers.Serializer):
             raise ValidationError(_('You already have unstarred this server.'))
 
         if attrs['status'] and StarredServer.objects.filter(
-            user__pk=self._user.pk
+                user__pk=self._user.pk
         ).count() >= 5:
             raise ValidationError(_('You can star up to 5 servers. Please unstar one first.'))
         return super().validate(attrs)
@@ -342,8 +372,8 @@ class NoteSerializer(serializers.ModelSerializer):
     def validate_pinned(self, value):
         if value and not self.instance.pinned:
             if Note.objects.filter(
-                server__pk=self.instance.server.pk,
-                pinned=True,
+                    server__pk=self.instance.server.pk,
+                    pinned=True,
             ).count() >= 3:
                 raise ValidationError(_('There can be at most 3 pinned notes. Please remove another one first.'))
         return value
@@ -359,8 +389,8 @@ class NoteCreateSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         if attrs.get('pinned', False) and Note.objects.filter(
-            server__pk=attrs['server'].pk,
-            pinned=True,
+                server__pk=attrs['server'].pk,
+                pinned=True,
         ).count() >= 3:
             raise ValidationError(_('There can be at most 3 pinned notes. Please remove another one first.'))
         return super().validate(attrs)

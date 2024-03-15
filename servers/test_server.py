@@ -1,16 +1,18 @@
+from datetime import timedelta
+
 from django.test import TestCase, TransactionTestCase
 from django.contrib.auth import get_user_model
+from django.urls import reverse
 
 from channels.testing import WebsocketCommunicator
 from channels.routing import URLRouter
 from channels.db import database_sync_to_async
 
 from wsutils.auth import APIAuthMiddlewareStack
-from servers.models import *
+from servers.models import Server
 from servers.routing import websocket_urlpatterns
 
 from api.apiclient.tokens import JWTRefreshToken
-
 
 User = get_user_model()
 WsApp = APIAuthMiddlewareStack(
@@ -85,10 +87,12 @@ class BackhaulConsumerTestCase(TransactionTestCase):
 
         await communicator.disconnect()
 
+
 class JWTTestCase(TransactionTestCase):
     """
     When requesting a websocket connection, Test whether it works normally when an access token is entered in the header.
     """
+
     def setUp(self):
         self.user = User.objects.create_user(username='testuser')
         self.server = Server.objects.create(name='testing', owner=self.user)
@@ -98,7 +102,6 @@ class JWTTestCase(TransactionTestCase):
         self.assertTrue(self.server.check_key(self.key))
         self.refresh = JWTRefreshToken.for_client(self.server.id)
         self.access = self.refresh.access_token
-
 
     async def test_connect(self):
         communicator = WebsocketCommunicator(
@@ -141,7 +144,7 @@ class JWTTestCase(TransactionTestCase):
         self.assertTrue('reason' in response)
         self.assertEqual(response['reason'], 'Permission denied. Please check your id and key again.')
 
-        await communicator.disconnect() 
+        await communicator.disconnect()
 
     async def test_invalid_token(self):
         refresh = JWTRefreshToken.for_client(self.server.id)
@@ -169,7 +172,8 @@ class JWTTestCase(TransactionTestCase):
         self.assertTrue('reason' in response)
         self.assertEqual(response['reason'], 'Permission denied. Please check your id and key again.')
 
-        await communicator.disconnect() 
+        await communicator.disconnect()
+
 
 class WebsocketReconnectTestCase(TransactionTestCase):
     """
@@ -187,7 +191,6 @@ class WebsocketReconnectTestCase(TransactionTestCase):
         self.access = self.refresh.access_token
 
     async def test_reconnect(self):
-
         # connection test 1
         communicator = WebsocketCommunicator(
             WsApp,
@@ -201,12 +204,12 @@ class WebsocketReconnectTestCase(TransactionTestCase):
         self.assertTrue(connected)
         count = await database_sync_to_async(self.server.sessions.count)()
         self.assertEqual(count, 1)
-            
+
         response = await communicator.receive_json_from()
         self.assertTrue('query' in response)
         self.assertEqual(response['query'], 'commit')
 
-        #Jwtrefreshveiw connect
+        # Jwtrefreshveiw connect
         response = self.client.post(
             reverse('api:apiclient:jwt:refresh'), {
                 "refresh": str(self.refresh)

@@ -16,9 +16,11 @@ from django.utils.translation import gettext, gettext_lazy as _
 from wsutils.models import WebSocketClient
 from events.models import Command
 from utils.models import UUIDBaseModel
-
+from iam.models import User, Group
 
 logger = logging.getLogger(__name__)
+
+STAT_LEVEL_NO = 5
 
 
 class Server(WebSocketClient):
@@ -76,13 +78,13 @@ class Server(WebSocketClient):
         if self._os_info is None:
             self._os_info = self.osversion_set.latest()
         return self._os_info
-    
+
     @property
     def time(self):
         if self._time is None:
             self._time = self.systemtime_set.latest()
         return self._time
-    
+
     @property
     def sys_users(self):
         if self._sys_users is None:
@@ -107,7 +109,7 @@ class Server(WebSocketClient):
     @property
     def cpu_physical_cores(self):
         return self.system_info.cpu_physical_cores
-    
+
     @property
     def cpu_logical_cores(self):
         return self.system_info.cpu_logical_cores
@@ -147,18 +149,18 @@ class Server(WebSocketClient):
         result = self.command_set.filter(
             delivered_at__isnull=False,
             acked_at__isnull=False,
-            delivered_at__gte=timezone.now()-timedelta(weeks=1),
+            delivered_at__gte=timezone.now() - timedelta(weeks=1),
         ).aggregate(
             delay_1h=Coalesce(Avg(
-                (F('acked_at')-F('delivered_at')),
-                filter=Q(delivered_at__gte=timezone.now()-timedelta(hours=1)),
+                (F('acked_at') - F('delivered_at')),
+                filter=Q(delivered_at__gte=timezone.now() - timedelta(hours=1)),
             ), timedelta(0)),
             delay_1d=Coalesce(Avg(
-                (F('acked_at')-F('delivered_at')),
-                filter=Q(delivered_at__gte=timezone.now()-timedelta(days=1)),
+                (F('acked_at') - F('delivered_at')),
+                filter=Q(delivered_at__gte=timezone.now() - timedelta(days=1)),
             ), timedelta(0)),
             delay_1w=Coalesce(Avg(
-                (F('acked_at')-F('delivered_at')),
+                (F('acked_at') - F('delivered_at')),
             ), timedelta(0)),
         )
         for key in result:
@@ -166,8 +168,8 @@ class Server(WebSocketClient):
         last = self.command_set.filter(
             Q(delivered_at__isnull=False)
             & (
-                Q(acked_at__isnull=False)
-                | (Q(acked_at__isnull=True) & Q(delivered_at__lte=timezone.now()-timedelta(seconds=180)))
+                    Q(acked_at__isnull=False)
+                    | (Q(acked_at__isnull=True) & Q(delivered_at__lte=timezone.now() - timedelta(seconds=180)))
             )
         ).order_by('-scheduled_at').first()
         if last is None:
@@ -242,7 +244,7 @@ class Server(WebSocketClient):
 
     def get_latest_info(self):
         return self.systeminfo_set.latest()
-    
+
     def get_latest_osinfo(self):
         return self.osversion_set.latest()
 
@@ -256,7 +258,7 @@ class Server(WebSocketClient):
             address__isnull=True,
         ).order_by('name')
 
-    def execute(self, cmdline, shell='internal', data=None, requested_by=None, run_after=[]):
+    def execute(self, cmdline, shell='internal', data=None, username='', groupname='alpacon', requested_by=None, run_after=[]):
         if not self.enabled or self.deleted_at is not None:
             raise ValidationError(_('Invalid server.'))
         if data is not None and type(data) != str:
@@ -266,6 +268,8 @@ class Server(WebSocketClient):
             shell=shell,
             line=cmdline,
             data=data,
+            username=username,
+            groupname=groupname,
             requested_by=requested_by
         )
         if run_after:
@@ -341,9 +345,47 @@ class Server(WebSocketClient):
             requested_by=requested_by
         )
 
+    def has_access(self, user: User, username, groupname):
+        # Check if the user and group are valid.
+        if not (User.objects.filter(username=username).exists() or self.has_user_by_username(username)):
+            return False
+
+        if not (Group.objects.filter(name=groupname).exists() or self.has_group_by_groupname(groupname)):
+            return False
+
+        # Grant access if the user is a superuser, staff, or the owner.
+        if user.is_superuser or user.is_staff or self.owner.pk == user.pk:
+            return True
+
+        # Grant access if the user has a manager or owner role in the group.
+        if self.groups.filter(
+                membership__user__pk=user.pk,
+                membership__role__in=['owner', 'manager']
+        ).exists():
+            return True
+
+        # Allow access only if it's the user's own account and not a higher privilege request, e.g., accessing root.
+        if username == user.username and self.groups.filter(
+                membership__user__pk=user.pk
+        ).exists():
+            return True
+
+        # Deny access if none of the above conditions are met.
+        return False
+
+    def has_user_by_username(self, username):
+        return self.systemuser_set.filter(
+            username=username
+        ).exists()
+
+    def has_group_by_groupname(self, groupname):
+        return self.systemgroup_set.filter(
+            groupname=groupname
+        ).exists()
+
     def has_user(self, user):
         return self.systemuser_set.filter(
-            iam_user__pk=user.pk, 
+            iam_user__pk=user.pk,
         ).exists()
 
     def has_group(self, group):
@@ -358,8 +400,8 @@ class Server(WebSocketClient):
             data={
                 'username': user.username,
                 'uid': user.uid,
-                'gid' : gid,
-                'groups' : gids,
+                'gid': gid,
+                'groups': gids,
                 'comment': '%s,,,,(alpacon)%s' % (user.get_full_name(), user.id),
                 'home_directory': user.home_directory,
                 'shell': user.shell,
@@ -372,7 +414,7 @@ class Server(WebSocketClient):
     def add_group(self, group, requested_by=None, run_after=[]):
         return self.execute(
             shell='internal',
-            cmdline='addgroup %s' %  group.name,
+            cmdline='addgroup %s' % group.name,
             data={
                 'groupname': group.name,
                 'gid': group.gid,
@@ -380,7 +422,7 @@ class Server(WebSocketClient):
             requested_by=requested_by,
             run_after=run_after,
         )
-    
+
     def del_user(self, user, requested_by=None, run_after=[]):
         return self.execute(
             shell='internal',
@@ -428,6 +470,15 @@ class Server(WebSocketClient):
             deps.append(cmd)
 
         return deps
+
+    def is_systemuser(self, username):
+        return self.systemuser_set.filter(username=username, iam_user__isnull=True).exists()
+
+    def systemuser_home_directory(self, username):
+        try:
+            return self.systemuser_set.get(username=username).directory
+        except:
+            return None
 
 
 class Installer(models.Model):
