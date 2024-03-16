@@ -2,7 +2,7 @@ import uuid
 from datetime import timedelta
 
 from django.db import models
-from django.db.models import Q
+from django.db.models import Q, UniqueConstraint
 from django.conf import settings
 from django.utils import timezone
 from django.utils.crypto import get_random_string
@@ -99,9 +99,12 @@ class APIToken(models.Model):
     class Meta:
         verbose_name = _('API token')
         verbose_name_plural = _('API tokens')
+        constraints = [
+            UniqueConstraint(fields=['name', 'user'], condition=Q(source='api'), name='unique_api_token')
+        ]
 
     def __str__(self):
-        return str(self.user)
+        return str(self.name)
 
     def clean_expires_at(self):
         if self.expires_at < timezone.now():
@@ -112,3 +115,4 @@ class APIToken(models.Model):
         if not self.key:
             self.key = get_random_string(64)
         super().save(*args, **kwargs)
+
