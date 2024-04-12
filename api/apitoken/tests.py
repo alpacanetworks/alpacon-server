@@ -181,7 +181,9 @@ class APITokenViewSetTestCase(APITestCase):
         self.client.login(username=self.user.username, password=self.password)
 
     def test_create(self):
-        response = self.client.post(reverse('api:auth:apitoken:apitoken-list'))
+        response = self.client.post(reverse('api:auth:apitoken:apitoken-list') ,{
+            'name': 'api-token',
+        })
         self.assertEquals(response.status_code, status.HTTP_201_CREATED)
         self.assertTrue('id' in response.data)
         self.assertTrue('key' in response.data)
@@ -190,9 +192,40 @@ class APITokenViewSetTestCase(APITestCase):
         self.assertTrue('expires_at' in response.data)
         self.assertIsNone(response.data['expires_at'])
 
+    def test_create_with_duplicate_name(self):
+        response = self.client.post(reverse('api:auth:apitoken:apitoken-list'), {
+            'name' : 'api-token-1',
+        })
+        self.assertEquals(response.status_code, status.HTTP_201_CREATED)
+
+        response = self.client.post(reverse('api:auth:apitoken:apitoken-list'), {
+            'name' : 'api-token-1',
+        })
+        self.assertEquals(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_update_with_duplicate_name(self):
+        response = self.client.post(reverse('api:auth:apitoken:apitoken-list'), {
+            'name' : 'api-token-1',
+        })
+        self.assertEquals(response.status_code, status.HTTP_201_CREATED)
+
+        response = self.client.post(reverse('api:auth:apitoken:apitoken-list'), {
+            'name' : 'api-token-2',
+        })
+        self.assertEquals(response.status_code, status.HTTP_201_CREATED)
+        token_id = response.data['id']
+
+        response = self.client.put(reverse('api:auth:apitoken:apitoken-detail', args=(token_id,)), {
+            'name' : 'api-token-1',
+            'enabled': False,
+        })
+        self.assertEquals(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+
     def test_create_options(self):
         expiration = timezone.now()+timedelta(weeks=1)
         response = self.client.post(reverse('api:auth:apitoken:apitoken-list'), {
+            'name': 'api-token',
             'expires_at': expiration,
             'enabled': False,
         })
@@ -211,7 +244,9 @@ class APITokenViewSetTestCase(APITestCase):
 
     def test_api_access(self):
         # create and obtain API token
-        response = self.client.post(reverse('api:auth:apitoken:apitoken-list'))
+        response = self.client.post(reverse('api:auth:apitoken:apitoken-list'), {
+            'name' : 'api-token'
+        })
         self.assertEquals(response.status_code, status.HTTP_201_CREATED)
         token = response.data['key']
 
@@ -227,8 +262,28 @@ class APITokenViewSetTestCase(APITestCase):
         response = self.client.get(reverse('api:status'))
         self.assertEquals(response.status_code, status.HTTP_200_OK)
 
-    def test_list(self):
+    # Deny API token creation via API token access
+    def test_create_via_api_access(self):
+        # create and obtain API token
+        response = self.client.post(reverse('api:auth:apitoken:apitoken-list'), {
+            'name' : 'api-token'
+        })
+        token = response.data['key']
+
+        # logout and verify
+        self.client.logout()
+
+        # try using API token
+        self.client.credentials(
+            HTTP_AUTHORIZATION='token="%s"' % token
+        )
         response = self.client.post(reverse('api:auth:apitoken:apitoken-list'))
+        self.assertEquals(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_list(self):
+        response = self.client.post(reverse('api:auth:apitoken:apitoken-list'), {
+            'name' : 'api-token'
+        })
         self.assertEquals(response.status_code, status.HTTP_201_CREATED)
 
         response = self.client.get(reverse('api:auth:apitoken:apitoken-list'))
@@ -237,7 +292,9 @@ class APITokenViewSetTestCase(APITestCase):
         self.assertEquals(len(response.data['results']), 1)
 
     def test_get(self):
-        response = self.client.post(reverse('api:auth:apitoken:apitoken-list'))
+        response = self.client.post(reverse('api:auth:apitoken:apitoken-list'), {
+            'name' : 'api-token'
+        })
         self.assertEquals(response.status_code, status.HTTP_201_CREATED)
         token_id = response.data['id']
 
@@ -246,6 +303,7 @@ class APITokenViewSetTestCase(APITestCase):
 
     def test_put(self):
         response = self.client.post(reverse('api:auth:apitoken:apitoken-list'), {
+            'name': 'api-token',
             'enabled': True,
             'expires_at': timezone.now()+timedelta(weeks=1),
         })
@@ -253,6 +311,7 @@ class APITokenViewSetTestCase(APITestCase):
         token_id = response.data['id']
 
         response = self.client.put(reverse('api:auth:apitoken:apitoken-detail', args=(token_id,)), {
+            'name': 'api-token',
             'enabled': False,
         })
         self.assertEquals(response.status_code, status.HTTP_200_OK)
@@ -264,6 +323,7 @@ class APITokenViewSetTestCase(APITestCase):
 
     def test_patch(self):
         response = self.client.post(reverse('api:auth:apitoken:apitoken-list'), {
+            'name': 'api-token',
             'enabled': True,
             'expires_at': timezone.now()+timedelta(weeks=1),
         })
@@ -271,6 +331,7 @@ class APITokenViewSetTestCase(APITestCase):
         token_id = response.data['id']
 
         response = self.client.patch(reverse('api:auth:apitoken:apitoken-detail', args=(token_id,)), {
+            'name' : 'api-token',
             'enabled': False,
         })
         self.assertEquals(response.status_code, status.HTTP_200_OK)
@@ -281,6 +342,7 @@ class APITokenViewSetTestCase(APITestCase):
         self.assertIsNotNone(response.data['expires_at'])
 
         response = self.client.patch(reverse('api:auth:apitoken:apitoken-detail', args=(token_id,)), {
+            'name': 'api-token',
             'expires_at': None,
         })
         self.assertEquals(response.status_code, status.HTTP_200_OK)
@@ -291,7 +353,9 @@ class APITokenViewSetTestCase(APITestCase):
         self.assertIsNone(response.data['expires_at'])
 
     def test_delete(self):
-        response = self.client.post(reverse('api:auth:apitoken:apitoken-list'))
+        response = self.client.post(reverse('api:auth:apitoken:apitoken-list'), {
+            'name': 'api-token',
+        })
         self.assertEquals(response.status_code, status.HTTP_201_CREATED)
         token_id = response.data['id']
 

@@ -1,11 +1,15 @@
 from django.contrib.auth import get_user_model
+from django.db import IntegrityError
+from django.utils.translation import gettext_lazy as _
 
 from rest_framework import viewsets
 from rest_framework.authentication import SessionAuthentication
+from rest_framework.exceptions import ValidationError
 
-from api.apitoken.models import APIToken
+from api.apitoken.permissions import APITokenObjectPermission
 from api.apitoken.serializers import *
 from api.apitoken.auth import APITokenAuthentication
+
 from utils.api.viewsets import DestroyListRetrieveViewSet
 
 
@@ -41,8 +45,9 @@ class APITokenViewSet(viewsets.ModelViewSet):
     queryset = APIToken.objects.filter(source='api').order_by('-updated_at')
     serializer_class = APITokenSerializer
     authentication_classes = [SessionAuthentication, APITokenAuthentication]
-    filterset_fields = ['enabled', 'remote_ip']
-    search_fields = ['id', 'user_agent', 'remote_ip']
+    permission_classes = [APITokenObjectPermission]
+    filterset_fields = ['name', 'enabled', 'remote_ip']
+    search_fields = ['id', 'name', 'user_agent', 'remote_ip']
 
     def get_serializer_class(self):
         if self.action == 'create':
@@ -55,4 +60,13 @@ class APITokenViewSet(viewsets.ModelViewSet):
         ).order_by('-updated_at')
 
     def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
+        try:
+            serializer.save(user=self.request.user)
+        except IntegrityError:
+            raise ValidationError(_('API token with this user and name already exists.'))
+
+    def perform_update(self, serializer):
+        try:
+            serializer.save()
+        except IntegrityError:
+            raise ValidationError(_('API token with this user and name already exists.'))
